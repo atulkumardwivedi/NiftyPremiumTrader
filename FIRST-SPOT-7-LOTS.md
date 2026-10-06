@@ -1,0 +1,5 @@
+# Corrected selection and position size
+
+Morning spot now comes from the earliest opstraoptiondataYYYY row ordered by tradetimeonly, expirydate, preserving the supplied expiry exclusion. There is no 09:20 time filter. Without legacy data, the explicitly labelled fallback is 09:15 NIFTY cash candle Open, never 09:20 or a later bar. The selection version is MORNING_FIRST_STORED_100_V2 so previous09:20 plans are not reused. Daily arrays remain in the supplied code's exact100-point order. Default lots 7 and lot size 65 give455 units; broker instrument validation still applies to live orders.
+
+The full-day DB-first/live data flow and original risk defaults remain. Strength filtering remains disabled by default. The attached lot7-study report contains original and research-candidate results. API/Angular builds passed, 32 functional checks passed, and five selected variants matched 2,576 actual source-fixture trades against the C# engine. This does not validate a connected PostgreSQL/Breeze/broker account; no live orders were placed.

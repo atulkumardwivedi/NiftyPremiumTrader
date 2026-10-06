@@ -1,0 +1,152 @@
+[
+  {
+    "Lots": 1,
+    "CooldownCandles": 9,
+    "ProfitTarget": 4500.0,
+    "HedgeTriggerLoss": -10000.0,
+    "NakedCatastrophicStop": -15000.0,
+    "HedgedStop": -15000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 2,
+    "CooldownCandles": 3,
+    "ProfitTarget": 8000.0,
+    "HedgeTriggerLoss": -22500.0,
+    "NakedCatastrophicStop": -44000.0,
+    "HedgedStop": -30000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 3,
+    "CooldownCandles": 4,
+    "ProfitTarget": 9000.0,
+    "HedgeTriggerLoss": -6000.0,
+    "NakedCatastrophicStop": -75000.0,
+    "HedgedStop": -25000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 4,
+    "CooldownCandles": 1,
+    "ProfitTarget": 5000.0,
+    "HedgeTriggerLoss": -4000.0,
+    "NakedCatastrophicStop": -75000.0,
+    "HedgedStop": -56000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 5,
+    "CooldownCandles": 4,
+    "ProfitTarget": 15000.0,
+    "HedgeTriggerLoss": -15000.0,
+    "NakedCatastrophicStop": -75000.0,
+    "HedgedStop": -75000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 6,
+    "CooldownCandles": 4,
+    "ProfitTarget": 25000.0,
+    "HedgeTriggerLoss": -12500.0,
+    "NakedCatastrophicStop": -150000.0,
+    "HedgedStop": -50000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 7,
+    "CooldownCandles": 3,
+    "ProfitTarget": 25000.0,
+    "HedgeTriggerLoss": -18000.0,
+    "NakedCatastrophicStop": -105000.0,
+    "HedgedStop": -94000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 8,
+    "CooldownCandles": 4,
+    "ProfitTarget": 24000.0,
+    "HedgeTriggerLoss": -20000.0,
+    "NakedCatastrophicStop": -120000.0,
+    "HedgedStop": -107500.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 9,
+    "CooldownCandles": 2,
+    "ProfitTarget": 24000.0,
+    "HedgeTriggerLoss": -21500.0,
+    "NakedCatastrophicStop": -25000.0,
+    "HedgedStop": -22500.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 10,
+    "CooldownCandles": 2,
+    "ProfitTarget": 35000.0,
+    "HedgeTriggerLoss": -20000.0,
+    "NakedCatastrophicStop": -155000.0,
+    "HedgedStop": -22500.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 11,
+    "CooldownCandles": 2,
+    "ProfitTarget": 39000.0,
+    "HedgeTriggerLoss": -12500.0,
+    "NakedCatastrophicStop": -175000.0,
+    "HedgedStop": -25000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 12,
+    "CooldownCandles": 4,
+    "ProfitTarget": 40000.0,
+    "HedgeTriggerLoss": -19000.0,
+    "NakedCatastrophicStop": -187500.0,
+    "HedgedStop": -25000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 13,
+    "CooldownCandles": 1,
+    "ProfitTarget": 70000.0,
+    "HedgeTriggerLoss": -9500.0,
+    "NakedCatastrophicStop": -175000.0,
+    "HedgedStop": -10000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 14,
+    "CooldownCandles": 1,
+    "ProfitTarget": 75000.0,
+    "HedgeTriggerLoss": -10500.0,
+    "NakedCatastrophicStop": -150000.0,
+    "HedgedStop": -12500.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  },
+  {
+    "Lots": 15,
+    "CooldownCandles": 2,
+    "ProfitTarget": 49000.0,
+    "HedgeTriggerLoss": -8500.0,
+    "NakedCatastrophicStop": -70000.0,
+    "HedgedStop": -10000.0,
+    "Profile": "HistoricalBest",
+    "Evidence": "Retrospective 351-session research; not independent live validation"
+  }
+]

@@ -1,0 +1,42 @@
+@host = http://localhost:5080
+
+### API budget
+GET {{host}}/api/data/budget
+
+### Add known weekly expiry when needed
+POST {{host}}/api/data/expiry?expiryDate=2026-09-29
+
+### Ensure any historical strike exists in PostgreSQL
+POST {{host}}/api/data/ensure-contract?date=2026-09-25&expiryDate=2026-09-29&strike=23100&optionType=CE&liveMode=false
+
+### Read candle data
+GET {{host}}/api/data/candles?date=2026-09-25&expiryDate=2026-09-29&strike=23100&optionType=CE&liveMode=false
+
+### Start single-day replay
+POST {{host}}/api/backtest/start
+Content-Type: application/json
+
+{
+  "date": "2026-09-25",
+  "expiryDate": "2026-09-29",
+  "hedgeDistance": 300
+}
+
+### Multi-day backtest
+POST {{host}}/api/backtest/range
+Content-Type: application/json
+
+{
+  "fromDate": "2026-09-01",
+  "toDate": "2026-09-30",
+  "hedgeDistance": 300
+}
+
+### Start paper live mode
+POST {{host}}/api/live/start?hedgeDistance=300&executeBrokerOrders=false
+
+### Live status
+GET {{host}}/api/live/status
+
+### Stop live
+POST {{host}}/api/live/stop

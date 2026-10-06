@@ -1,0 +1,1590 @@
+<div class="page-shell">
+  <header class="topbar">
+    <div>
+      <h1>NIFTY Premium Candle Trader</h1>
+      <p>
+        5-minute premium-candle strategy • causal replay • automatic hedge •
+        live/paper trading
+      </p>
+    </div>
+
+    <div class="budget-card" *ngIf="budget">
+      <div class="budget-title">ICICI API budget</div>
+      <div class="budget-value">
+        {{ budget.used | number: "1.0-0" }} /
+        {{ budget.limit | number: "1.0-0" }}
+      </div>
+      <div class="budget-meta">
+        {{ budget.remaining | number: "1.0-0" }} calls remaining · {{ budget.perMinuteLimit }} calls/minute
+      </div>
+      <div class="budget-meta">
+        {{ budget.historicalRemaining | number: "1.0-0" }} available for
+        historical loading
+      </div>
+    </div>
+  </header>
+
+  <section class="panel">
+    <strong>Database data — {{ selectedDate }}{{ expiryDate ? ' · expiry ' + expiryDate : ' · all expiries' }}</strong>
+    <button type="button" (click)="refreshDataAvailability()">Refresh database count</button>
+    <p *ngIf="dataAvailability as available">
+      {{ available.totalContracts }} option contracts: {{ available.callContracts }} CE / {{ available.putContracts }} PE ·
+      {{ available.distinctStrikePrices }} distinct strike prices · {{ available.totalCandles }} candles.
+      Counts include contracts with partial data; cash index is excluded.
+    </p>
+    <p *ngIf="!dataAvailability && !dataAvailabilityError">Loading database count…</p>
+    <p *ngIf="dataAvailabilityError">{{ dataAvailabilityError }}</p>
+    <details *ngIf="dataAvailability?.contracts?.length"><summary>Stored strikes and candle coverage</summary>
+      <table><thead><tr><th>Expiry</th><th>Side</th><th>Strike</th><th>Candles</th><th>First (IST)</th><th>Last (IST)</th></tr></thead>
+      <tbody><tr *ngFor="let contract of dataAvailability.contracts">
+        <td>{{ contract.expiryDate }}</td><td>{{ contract.optionType }}</td><td>{{ contract.strike }}</td><td>{{ contract.candleCount }}</td>
+        <td>{{ contract.firstCandleTime | date:'HH:mm':'+0530' }}</td><td>{{ contract.lastCandleTime | date:'HH:mm':'+0530' }}</td>
+      </tr></tbody></table>
+    </details>
+  </section>
+
+  <section class="panel main-controls">
+    <div class="field">
+      <label>Trading date</label>
+      <input type="date" [(ngModel)]="selectedDate" (ngModelChange)="dataSelectionChanged()" />
+    </div>
+
+    <div class="field">
+      <label>Expiry date</label>
+      <input type="date" [(ngModel)]="expiryDate" (ngModelChange)="dataSelectionChanged()" />
+      <small>Leave blank if already stored in DB / niftyexpiry.</small>
+    </div>
+
+    <div class="field">
+      <label>Lots</label>
+      <select [(ngModel)]="lots" [disabled]="loading || replayBusy || !!liveStatus?.state?.running" (ngModelChange)="refreshRiskSetup()">
+        <option [ngValue]="7">7 lots</option><option [ngValue]="15">15 lots</option>
+      </select>
+      <small>Quantity: {{ configuredQuantity }}. Thresholds apply automatically.</small>
+    </div>
+    <div class="field">
+      <label>Sell strike</label>
+      <select [(ngModel)]="sellStrikeMode" [disabled]="loading || replayBusy || !!liveStatus?.state?.running" (ngModelChange)="invalidateCapital()">
+        <option value="Delta50">Closest absolute delta 0.50</option>
+        <option value="ATM">ATM</option><option value="OTM1">CE ATM+1 / PE ATM−1</option>
+      </select>
+    </div>
+    <label class="broker-toggle"><input type="checkbox" [(ngModel)]="marginHedgeEnabled" [disabled]="loading || replayBusy || !!liveStatus?.state?.running" (ngModelChange)="invalidateCapital()" />
+      <span>10% premium margin hedge<small>Buy and confirm before selling. Lowest eligible premium if target is unavailable.</small></span>
+    </label>
+    <label class="broker-toggle"><input type="checkbox" [(ngModel)]="protectionHedgeEnabled" [disabled]="loading || replayBusy || !!liveStatus?.state?.running" (ngModelChange)="invalidateCapital()" />
+      <span>Loss-triggered distance hedge</span>
+    </label>
+    <div class="field"><label>Protection distance (points)</label>
+      <input type="number" min="100" step="100" [(ngModel)]="hedgeDistance" [disabled]="loading || replayBusy || !!liveStatus?.state?.running" (ngModelChange)="invalidateCapital()" />
+    </div>
+
+    <div class="action-group">
+      <button
+        type="button"
+        class="primary"
+        [disabled]="loading || replayBusy"
+        (click)="startBacktest()"
+      >
+        Start day replay
+      </button>
+
+      <button type="button" class="live-button" (click)="startLive()">
+        Start live
+      </button>
+
+      <button type="button" (click)="stopLive()">Stop live</button>
+    </div>
+
+    <label class="broker-toggle">
+      <input type="checkbox" [(ngModel)]="executeBrokerOrders" />
+      <span>
+        Send real Kotak Neo orders
+        <small>
+          ICICI provides market data; Kotak Neo places entry, hedge and exit
+          orders. Requires LiveTrading:AllowBrokerOrders=true.
+        </small>
+      </span>
+    </label>
+  </section>
+
+  <div class="error-box" *ngIf="error">
+    {{ error }}
+  </div>
+
+  <section class="panel backtest-status" role="status" aria-live="polite">
+    <h2>Backtest: {{ backtestStatus }}</h2>
+    <p>{{ backtestMessage }}</p>
+    <p *ngIf="backtestStartedAt">
+      Elapsed: {{ backtestElapsedSeconds }} seconds
+    </p>
+    <ng-container *ngIf="backtestProgress as progress">
+      <p>
+        {{ progress.processedDays }} / {{ progress.totalDays }} weekdays
+        processed
+        <span *ngIf="progress.currentDate"> — {{ progress.currentDate }}</span>
+      </p>
+      <progress
+        [value]="progress.processedDays"
+        [max]="progress.totalDays || 1"
+      ></progress>
+    </ng-container>
+  </section>
+
+  <section class="panel sizing-panel">
+    <h2>Settings for the next run</h2>
+    <p>
+      Choose lots above; these values apply automatically to both backtest and
+      live.
+    </p>
+    <div class="sizing-values" *ngIf="riskSetup as settings">
+      <span
+        >Lots / quantity
+        <strong
+          >{{ settings.lots }} × {{ settings.lotSize }} =
+          {{ settings.lots * settings.lotSize }}</strong
+        ></span
+      >
+      <span
+        >Target
+        <strong>{{ settings.profitTarget | number: "1.2-2" }}</strong></span
+      >
+      <span
+        >Hedge trigger
+        <strong>{{ settings.hedgeTriggerLoss | number: "1.2-2" }}</strong></span
+      >
+      <span
+        >Naked stop
+        <strong>{{
+          settings.nakedCatastrophicStop | number: "1.2-2"
+        }}</strong></span
+      >
+      <span
+        >Hedged stop
+        <strong>{{ settings.hedgedStop | number: "1.2-2" }}</strong></span
+      >
+      <span
+        >Cooldown <strong>{{ settings.cooldownCandles }} candles</strong></span
+      >
+    </div>
+    <small
+      >Automatic 7-lot locked / 15-lot application reference presets. Entry: 1% opposing bodies on at
+      least 2 pairs. EOD: 15:15. Amounts apply to the whole position.</small
+    >
+    <div class="capital-controls">
+      <h3>Required money for backtest</h3>
+      <label>Preview side <select [(ngModel)]="capitalOptionType" (ngModelChange)="invalidateCapital()"><option value="CE">CE</option><option value="PE">PE</option></select></label>
+      <button (click)="refreshCapital()" [disabled]="capitalLoading || loading || replayBusy || !!liveStatus?.state?.running">{{ capitalLoading ? "Preparing saved data…" : "Calculate required money" }}</button>
+      <p class="error" *ngIf="capitalError">{{ capitalError }}</p>
+      <ng-container *ngIf="capitalPreview as capital"><ng-container *ngTemplateOutlet="capitalComparison; context: { $implicit: capital }"></ng-container></ng-container>
+    </div>
+    <details class="live-margin-details">
+      <summary>Kotak margin — live trading only</summary>
+      <p>Historical backtests do not need today's margin.</p>
+      <button
+        type="button"
+        (click)="refreshMargin()"
+        [disabled]="marginLoading || !!liveStatus?.state?.running"
+      >
+        {{ marginLoading ? "Checking…" : "Check live margin" }}
+      </button>
+      <p class="error" *ngIf="marginError">{{ marginError }}</p>
+      <div class="sizing-values" *ngIf="sizingPreview as margin">
+        <span
+          >Available
+          <strong>{{ margin.availableMargin | number: "1.2-2" }}</strong></span
+        >
+        <span
+          >Required margin
+          <strong>{{ margin.requiredMargin | number: "1.2-2" }}</strong></span
+        >
+        <span
+          >Hedge reserve
+          <strong>{{ margin.hedgeCashReserve | number: "1.2-2" }}</strong></span
+        >
+        <span
+          >Total required
+          <strong>{{ margin.totalRequired | number: "1.2-2" }}</strong></span
+        >
+        <span
+          >Usable after reserve
+          <strong>{{ margin.usableMargin | number: "1.2-2" }}</strong></span
+        >
+        <span
+          >Shortfall
+          <strong>{{ margin.shortfall | number: "1.2-2" }}</strong></span
+        >
+      </div>
+      <p *ngIf="sizingPreview?.awaitingPostHedgeMargin">Kotak hedge-buy cash: ₹{{ sizingPreview.hedgeBuyRequired | number: "1.2-2" }} · {{ sizingPreview.hedgeBuyAffordable ? "Cash available; short check pending hedge fill" : "Insufficient hedge cash" }}</p>
+      <p *ngIf="sizingPreview">{{ sizingPreview.message }} · {{ sizingPreview.marginSource }}</p>
+      <ng-container *ngIf="sizingPreview?.capital as capital"><ng-container *ngTemplateOutlet="capitalComparison; context: { $implicit: capital }"></ng-container></ng-container>
+    </details>
+  </section>
+
+  <ng-template #capitalComparison let-capital>
+    <div class="sizing-values">
+      <span>Without hedge <strong>₹{{ capital.withoutHedge | number: "1.2-2" }}</strong></span>
+      <span>With 10% hedge <strong>₹{{ capital.withMarginHedge | number: "1.2-2" }}</strong></span>
+      <span>With distance hedge <strong>₹{{ capital.withProtectionHedge | number: "1.2-2" }}</strong></span>
+      <span>With both hedges <strong>₹{{ capital.withBothHedges | number: "1.2-2" }}</strong></span>
+      <span>Entry requirement for selection <strong>₹{{ capital.selectedRequired | number: "1.2-2" }}</strong></span>
+    </div>
+    <p *ngIf="capital.actualAfterMarginHedgeRequired != null">After hedge fill — Kotak short quote plus paid hedge cash: <strong>₹{{ capital.actualAfterMarginHedgeRequired | number: "1.2-2" }}</strong></p>
+    <p>Margin hedge: {{ capital.marginHedgeStrike || "Unavailable" }} · Premium {{ capital.marginHedgePremium | number: "1.2-2" }} · {{ capital.marginHedgeReason }}</p>
+    <p>Distance hedge: {{ capital.protectionHedgeStrike || "Unavailable" }} · Premium {{ capital.protectionHedgePremium | number: "1.2-2" }}</p>
+    <small>{{ capital.source }} · {{ capital.note }} Distance-hedge relief begins only after it is bought.</small>
+  </ng-template>
+  <section class="panel" *ngIf="step || rangeResult">
+    <h2>Peak required money by day (estimated)</h2>
+    <p>Includes the margin estimate, long-leg cash, costs, loss funding and short-first exit cash. Same-day profits are not reused.</p>
+    <div *ngFor="let message of step?.dataMessages" class="messages">{{ message }}</div>
+    <div *ngIf="step">{{ step.date }}: <strong>₹{{ step.peakRequiredMoney | number: "1.2-2" }}</strong> · {{ step.peakRequiredMoneyTime | date: "HH:mm" : "+0530" }}</div>
+    <table *ngIf="rangeResult"><thead><tr><th>Date</th><th>Peak required money</th><th>Time (IST)</th><th>Net P&amp;L</th></tr></thead>
+      <tbody><tr *ngFor="let day of rangeResult.days"><td>{{ day.date }}</td><td>₹{{ day.peakRequiredMoney | number: "1.2-2" }}</td><td>{{ day.peakRequiredMoneyTime | date: "HH:mm" : "+0530" }}</td><td>₹{{ day.netPnl | number: "1.2-2" }}</td></tr></tbody>
+    </table>
+  </section>
+  <section class="panel" *ngIf="step?.activeTrade || liveStatus?.state?.activeTrade">
+    <ng-container *ngIf="step?.activeTrade || liveStatus?.state?.activeTrade as trade">
+      <h3>Margin hedge and capital</h3>
+      <p *ngIf="trade.entryBrokerMargin as margin">After entry — Kotak account margin used: <strong>₹{{ margin.accountMarginUsed | number: "1.2-2" }}</strong> · {{ margin.scope }}</p>
+      <p *ngIf="trade.protectionBrokerMargin as margin">After distance protection — Kotak account margin used: <strong>₹{{ margin.accountMarginUsed | number: "1.2-2" }}</strong> · {{ margin.scope }}</p>
+      <p *ngIf="liveStatus?.state?.accountMargin as margin">Latest Kotak account margin used: <strong>₹{{ margin.accountMarginUsed | number: "1.2-2" }}</strong> · Available ₹{{ margin.availableMargin | number: "1.2-2" }} · {{ margin.checkedAt | date: "HH:mm" : "+0530" }}</p>
+      <small *ngIf="liveStatus?.state?.accountMarginMessage">{{ liveStatus?.state?.accountMarginMessage }}</small>
+      <p *ngIf="trade.hasMarginHedge">BUY {{ trade.marginHedgeStrike }} {{ trade.soldOptionType }} · {{ trade.quantity }} units · Entry ₹{{ trade.marginHedgeEntryPrice | number: "1.2-2" }} · {{ trade.marginHedgeSelectionReason }}</p>
+      <p *ngIf="!trade.hasMarginHedge">10% margin hedge disabled or awaiting confirmation.</p>
+      <p>Execution: {{ trade.executionStage }} · Peak required ₹{{ trade.peakRequiredMoney | number: "1.2-2" }}</p>
+      <ng-container *ngIf="trade.entryCapital as capital"><ng-container *ngTemplateOutlet="capitalComparison; context: { $implicit: capital }"></ng-container></ng-container>
+    </ng-container>
+  </section>
+  <ng-template #appliedSettings let-settings let-title="title">
+    <div class="applied-settings" *ngIf="settings">
+      <h3>{{ title }}</h3>
+      <div class="sizing-values">
+        <span
+          >Lots / quantity
+          <strong
+            >{{ settings.lots }} × {{ settings.lotSize }} =
+            {{ settings.lots * settings.lotSize }}</strong
+          ></span
+        >
+        <span
+          >Target
+          <strong>{{ settings.profitTarget | number: "1.2-2" }}</strong></span
+        >
+        <span
+          >Hedge trigger
+          <strong>{{
+            settings.hedgeTriggerLoss | number: "1.2-2"
+          }}</strong></span
+        >
+        <span
+          >Naked stop
+          <strong>{{
+            settings.nakedCatastrophicStop | number: "1.2-2"
+          }}</strong></span
+        >
+        <span
+          >Hedged stop
+          <strong>{{ settings.hedgedStop | number: "1.2-2" }}</strong></span
+        >
+        <span
+          >Cooldown
+          <strong>{{ settings.cooldownCandles }} candles</strong></span
+        >
+      </div>
+      <small
+        >Settings captured for this run / trade. Changing lots above applies to
+        a new run.</small
+      >
+    </div>
+  </ng-template>
+  <section
+    class="panel"
+    *ngIf="
+      step?.appliedSettings ||
+      rangeResult?.appliedSettings ||
+      liveStatus?.state?.setup
+    "
+  >
+    <ng-container
+      *ngTemplateOutlet="
+        appliedSettings;
+        context: {
+          $implicit: step?.appliedSettings,
+          title: 'Applied to this day backtest',
+        }
+      "
+    ></ng-container>
+    <ng-container
+      *ngTemplateOutlet="
+        appliedSettings;
+        context: {
+          $implicit: rangeResult?.appliedSettings,
+          title: 'Applied to this range backtest',
+        }
+      "
+    ></ng-container>
+    <ng-container
+      *ngTemplateOutlet="
+        appliedSettings;
+        context: {
+          $implicit:
+            liveStatus?.state?.activeTrade?.riskSetup ||
+            liveStatus?.state?.setup,
+          title: 'Applied to the live session / active trade',
+        }
+      "
+    ></ng-container>
+  </section>
+
+  <section class="panel replay-panel" *ngIf="step">
+    <div class="section-title-row">
+      <div>
+        <h2>Step-by-step backtest</h2>
+        <p>{{ step.date }} • Expiry {{ step.expiryDate }}</p>
+      </div>
+
+      <div class="step-actions">
+        <button
+          type="button"
+          (click)="move(-1)"
+          [disabled]="replayBusy || step.currentIndex === 0"
+        >
+          ← Previous 5 min
+        </button>
+
+        <button
+          type="button"
+          class="primary"
+          (click)="move(1)"
+          [disabled]="replayBusy || step.currentIndex >= step.totalSteps - 1"
+        >
+          Next 5 min →
+        </button>
+        <span class="replay-updating" aria-live="polite">
+          {{ replayBusy ? "Updating…" : "Ready" }}
+        </span>
+      </div>
+    </div>
+
+    <div class="metric-grid">
+      <div class="metric">
+        <span class="metric-label">Replay candle (IST)</span>
+        <strong>{{ step.date }} {{ replayTimeIst(step.currentTime) }}</strong>
+      </div>
+
+      <div class="metric">
+        <span class="metric-label">Step</span>
+        <strong>{{ step.currentIndex + 1 }} / {{ step.totalSteps }}</strong>
+      </div>
+
+      <div class="metric signal-metric">
+        <span class="metric-label">Current signal</span>
+        <strong>{{ signalText() }}</strong>
+      </div>
+
+      <div class="metric">
+        <span class="metric-label">Pairs B / S</span>
+        <strong>
+          {{ step.signal?.bullishPairs || 0 }} /
+          {{ step.signal?.bearishPairs || 0 }}
+        </strong>
+      </div>
+
+      <div class="metric">
+        <span class="metric-label">Selected sell strike</span>
+        <strong>{{ step.signal?.selectedAtmStrike || "-" }}</strong>
+      </div>
+
+      <div class="metric pending-metric">
+        <span class="metric-label">Pending next-open action</span>
+        <strong>{{ pendingActionText() }}</strong>
+      </div>
+
+      <div class="metric">
+        <span class="metric-label">Realized P&amp;L</span>
+        <strong
+          [class.profit]="step.realizedPnl >= 0"
+          [class.loss]="step.realizedPnl < 0"
+        >
+          {{ step.realizedPnl | number: "1.0-0" }}
+        </strong>
+      </div>
+
+      <div class="metric">
+        <span class="metric-label">Open P&amp;L</span>
+        <strong
+          [class.profit]="step.unrealizedPnl >= 0"
+          [class.loss]="step.unrealizedPnl < 0"
+        >
+          {{ step.unrealizedPnl | number: "1.0-0" }}
+        </strong>
+      </div>
+    </div>
+
+    <div class="pair-table" *ngIf="stepSignalPairDetails.length > 0">
+      <h3>Premium candle signal details</h3>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Pair / CE &amp; PE strikes</th>
+              <th>CE Open</th>
+              <th>CE Close</th>
+              <th>CE body %</th>
+              <th>PE Open</th>
+              <th>PE Close</th>
+              <th>PE body %</th>
+              <th>Pair</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let pair of stepSignalPairDetails">
+              <td>
+                {{ pair.pairNumber }}: {{ pair.callStrike }} CE /
+                {{ pair.putStrike }} PE
+              </td>
+              <td>{{ pair.callOpen | number: "1.2-2" }}</td>
+              <td>{{ pair.callClose | number: "1.2-2" }}</td>
+              <td
+                [class.profit]="pair.callChangePercent > 0"
+                [class.loss]="pair.callChangePercent < 0"
+              >
+                {{ pair.callChangePercent | number: "1.2-2" }}%
+              </td>
+              <td>{{ pair.putOpen | number: "1.2-2" }}</td>
+              <td>{{ pair.putClose | number: "1.2-2" }}</td>
+              <td
+                [class.profit]="pair.putChangePercent > 0"
+                [class.loss]="pair.putChangePercent < 0"
+              >
+                {{ pair.putChangePercent | number: "1.2-2" }}%
+              </td>
+              <td>
+                <span
+                  class="signal-pill"
+                  [class.bullish]="pair.pairSignal === 'BULLISH'"
+                  [class.bearish]="pair.pairSignal === 'BEARISH'"
+                >
+                  {{ pair.pairSignal }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" *ngIf="mode === 'live' && liveStatus">
+    <div class="section-title-row">
+      <div>
+        <h2>Live strategy status</h2>
+        <p>{{ liveStatus.state.message }}</p>
+      </div>
+
+      <span class="status-pill" [class.running]="liveStatus.state.running">
+        {{ liveStatus.state.running ? "RUNNING" : "STOPPED" }}
+      </span>
+    </div>
+
+    <div class="metric-grid">
+      <div class="metric">
+        <span class="metric-label">Mode</span>
+        <strong>{{
+          liveStatus.state.executeBrokerOrders ? "REAL ORDERS" : "PAPER"
+        }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Market data</span>
+        <strong>ICICI Breeze</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Execution broker</span>
+        <strong>Kotak Neo</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Date</span>
+        <strong>{{ liveStatus.state.sessionDate }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Expiry</span>
+        <strong>{{ liveStatus.state.expiryDate }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Lots</span>
+        <strong>{{ liveStatus.state.lots }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Lot size</span>
+        <strong>{{ liveStatus.state.lotSize }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Quantity</span>
+        <strong>{{ liveStatus.state.quantity }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">REST candle refresh</span>
+        <strong>{{ liveStatus.state.refreshMinutes || 5 }} min</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">API server India time</span>
+        <strong>{{
+          liveStatus.state.serverIndiaTime | date: "HH:mm:ss" : "+0530"
+        }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Strategy processed candle</span>
+        <strong>
+          {{ liveStatus.state.lastProcessedCandle | date: "HH:mm" : "+0530" }}
+        </strong>
+      </div>
+      <div class="metric signal-metric">
+        <span class="metric-label">Last signal</span>
+        <strong>{{ signalText() }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Signal candle</span>
+        <strong *ngIf="liveStatus.state.lastSignal?.candleTime">
+          {{
+            liveStatus.state.lastSignal?.candleTime | date: "HH:mm" : "+0530"
+          }}
+        </strong>
+        <strong *ngIf="!liveStatus.state.lastSignal?.candleTime">-</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Market latest completed candle</span>
+        <strong>
+          {{
+            liveStatus.state.expectedCompletedCandle | date: "HH:mm" : "+0530"
+          }}
+        </strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Entry status</span>
+        <strong>{{ liveStatus.state.entryStatus || "-" }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Open position</span>
+        <strong *ngIf="activeLiveTrade as trade">
+          SELL {{ trade.soldStrike }} {{ trade.soldOptionType }}
+        </strong>
+        <strong *ngIf="!activeLiveTrade">NONE</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Open P&amp;L</span>
+        <strong
+          *ngIf="activeLiveTrade as trade"
+          [class.profit]="trade.netPnl >= 0"
+          [class.loss]="trade.netPnl < 0"
+        >
+          {{ trade.netPnl | number: "1.0-0" }}
+        </strong>
+        <strong *ngIf="!activeLiveTrade">0</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Hedge state</span>
+        <strong *ngIf="activeLiveTrade?.isHedged">
+          BUY {{ activeLiveTrade?.hedgeStrike }}
+          {{ activeLiveTrade?.soldOptionType }}
+        </strong>
+        <strong *ngIf="activeLiveTrade && !activeLiveTrade.isHedged"
+          >NOT ACTIVE</strong
+        >
+        <strong *ngIf="!activeLiveTrade">-</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Cooldown</span>
+        <strong>{{ liveStatus.state.cooldownRemaining || 0 }} candle(s)</strong>
+      </div>
+    </div>
+
+    <div class="pair-table" *ngIf="liveSignalPairDetails.length > 0">
+      <h3>Live premium candle signal details</h3>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Pair / CE &amp; PE strikes</th>
+              <th>CE Open</th>
+              <th>CE Close</th>
+              <th>CE body %</th>
+              <th>PE Open</th>
+              <th>PE Close</th>
+              <th>PE body %</th>
+              <th>Pair</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let pair of liveSignalPairDetails">
+              <td>
+                {{ pair.pairNumber }}: {{ pair.callStrike }} CE /
+                {{ pair.putStrike }} PE
+              </td>
+              <td>{{ pair.callOpen | number: "1.2-2" }}</td>
+              <td>{{ pair.callClose | number: "1.2-2" }}</td>
+              <td
+                [class.profit]="pair.callChangePercent > 0"
+                [class.loss]="pair.callChangePercent < 0"
+              >
+                {{ pair.callChangePercent | number: "1.2-2" }}%
+              </td>
+              <td>{{ pair.putOpen | number: "1.2-2" }}</td>
+              <td>{{ pair.putClose | number: "1.2-2" }}</td>
+              <td
+                [class.profit]="pair.putChangePercent > 0"
+                [class.loss]="pair.putChangePercent < 0"
+              >
+                {{ pair.putChangePercent | number: "1.2-2" }}%
+              </td>
+              <td>
+                <span
+                  class="signal-pill"
+                  [class.bullish]="pair.pairSignal === 'BULLISH'"
+                  [class.bearish]="pair.pairSignal === 'BEARISH'"
+                >
+                  {{ pair.pairSignal }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="budget-warning" *ngIf="liveStatus.state.budgetPlan?.isDegraded">
+      The API budget is low. Live refresh has automatically degraded to
+      {{ liveStatus.state.refreshMinutes }} minutes to remain within the
+      configured 2,000-call limit.
+    </div>
+  </section>
+
+  <section class="panel broker-panel" *ngIf="mode === 'live'">
+    <div class="section-title-row broker-title-row">
+      <div>
+        <h2>Kotak live positions</h2>
+        <p>
+          Only OPEN positions are shown here. LTP and P&amp;L refresh from Kotak
+          live quotes every second.
+        </p>
+      </div>
+
+      <div class="action-group">
+        <span class="muted" *ngIf="brokerDashboard?.refreshedAt">
+          Broker sync
+          {{ brokerDashboard?.refreshedAt | date: "HH:mm:ss" : "+0530" }}
+        </span>
+        <button
+          type="button"
+          (click)="refreshBrokerDashboard()"
+          [disabled]="brokerLoading"
+        >
+          Refresh Kotak
+        </button>
+      </div>
+    </div>
+
+    <div class="error-box" *ngIf="brokerError">
+      {{ brokerError }}
+    </div>
+
+    <div class="loading-box" *ngIf="brokerLoading">
+      Processing Kotak request...
+    </div>
+
+    <div class="broker-success" *ngIf="brokerMessage">
+      {{ brokerMessage }}
+    </div>
+
+    <div class="broker-realtime-strip">
+      <span class="status-pill" [class.running]="brokerRealtimeConnected">
+        {{
+          brokerRealtimeConnected ? "KOTAK LIVE QUOTES" : "KOTAK QUOTES OFFLINE"
+        }}
+      </span>
+      <span>Tracked: {{ brokerRealtimeSubscriptions }}</span>
+      <span>{{ brokerRealtimeMessage }}</span>
+    </div>
+
+    <div class="broker-summary-grid">
+      <div class="broker-summary-card">
+        <span>Open positions</span>
+        <strong>{{ brokerPositions.length }}</strong>
+      </div>
+      <div class="broker-summary-card">
+        <span>Live P&amp;L</span>
+        <strong
+          [class.profit]="totalBrokerPnl >= 0"
+          [class.loss]="totalBrokerPnl < 0"
+        >
+          {{ totalBrokerPnl | number: "1.0-0" }}
+        </strong>
+      </div>
+      <div class="broker-summary-card">
+        <span>Working orders</span>
+        <strong>{{ workingOrders.length }}</strong>
+      </div>
+      <div class="broker-summary-card">
+        <span>Feed</span>
+        <strong>{{
+          brokerRealtimeConnected ? "1 SEC LIVE" : "SNAPSHOT"
+        }}</strong>
+      </div>
+    </div>
+
+    <div class="strategy-live-card" *ngIf="activeLiveTrade as systemTrade">
+      <ng-container
+        *ngTemplateOutlet="
+          appliedSettings;
+          context: {
+            $implicit: systemTrade.riskSetup,
+            title: 'Applied to this live trade',
+          }
+        "
+      ></ng-container>
+      <div class="strategy-live-header">
+        <div>
+          <strong>System strategy position</strong>
+          <span class="source-pill system-source">SYSTEM</span>
+        </div>
+        <span class="status-pill running">OPEN</span>
+      </div>
+
+      <div class="strategy-leg-grid">
+        <div class="strategy-leg hedge-leg" *ngIf="systemTrade.hasMarginHedge">
+          <span class="leg-label">MARGIN HEDGE</span>
+          <strong>BUY {{ systemTrade.marginHedgeStrike }} {{ systemTrade.soldOptionType }}</strong>
+          <span>Entry {{ systemTrade.marginHedgeEntryPrice | number: "1.2-2" }}</span>
+          <span *ngIf="strategyMarginHedgePosition as position">LTP {{ position.lastPrice | number: "1.2-2" }} · P&amp;L {{ position.pnl | number: "1.0-0" }}</span>
+        </div>
+        <div class="strategy-leg short-leg">
+          <span class="leg-label">SHORT LEG</span>
+          <strong
+            >SELL {{ systemTrade.soldStrike }}
+            {{ systemTrade.soldOptionType }}</strong
+          >
+          <span>Entry {{ systemTrade.entryPrice | number: "1.2-2" }}</span>
+          <span *ngIf="strategyShortPosition as shortPosition">
+            LTP {{ shortPosition.lastPrice | number: "1.2-2" }} · P&amp;L
+            {{ shortPosition.pnl | number: "1.0-0" }}
+          </span>
+        </div>
+
+        <div
+          class="strategy-leg hedge-leg"
+          [class.inactive-leg]="!systemTrade.isHedged"
+        >
+          <span class="leg-label">LOSS-TRIGGERED PROTECTION</span>
+          <strong *ngIf="systemTrade.isHedged">
+            BUY {{ systemTrade.hedgeStrike }} {{ systemTrade.soldOptionType }}
+          </strong>
+          <strong *ngIf="!systemTrade.isHedged && plannedSystemHedgeStrike">
+            Planned BUY {{ plannedSystemHedgeStrike }}
+            {{ systemTrade.soldOptionType }}
+          </strong>
+          <strong *ngIf="!systemTrade.isHedged && !plannedSystemHedgeStrike">
+            Not active yet
+          </strong>
+          <span *ngIf="systemTrade.isHedged">
+            Entry {{ systemTrade.hedgeEntryPrice | number: "1.2-2" }}
+          </span>
+          <span *ngIf="!systemTrade.isHedged">
+            Activates at the trade’s applied hedge trigger
+          </span>
+          <span *ngIf="strategyHedgePosition as hedgePosition">
+            LTP {{ hedgePosition.lastPrice | number: "1.2-2" }} · P&amp;L
+            {{ hedgePosition.pnl | number: "1.0-0" }}
+          </span>
+        </div>
+
+        <div class="strategy-leg pnl-leg">
+          <span class="leg-label">STRATEGY MARK</span>
+          <strong
+            [class.profit]="systemTrade.netPnl >= 0"
+            [class.loss]="systemTrade.netPnl < 0"
+          >
+            {{ systemTrade.netPnl | number: "1.0-0" }}
+          </strong>
+          <span>{{ systemTrade.lots }} lots × {{ systemTrade.lotSize }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="collapse-row">
+      <button
+        type="button"
+        class="collapse-button"
+        (click)="positionsExpanded = !positionsExpanded"
+      >
+        <span>{{ positionsExpanded ? "▼" : "▶" }}</span>
+        Open positions ({{ brokerPositions.length }})
+      </button>
+    </div>
+
+    <div *ngIf="positionsExpanded">
+      <div
+        class="table-wrap"
+        *ngIf="brokerPositions.length > 0; else noKotakPositions"
+      >
+        <table class="positions-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Role</th>
+              <th>Contract</th>
+              <th>Side</th>
+              <th>Qty</th>
+              <th>Lots</th>
+              <th>Average</th>
+              <th>LTP</th>
+              <th>Live P&amp;L</th>
+              <th>Feed</th>
+              <th>Chart</th>
+              <th>Exit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let position of brokerPositions">
+              <td>
+                <span
+                  class="source-pill"
+                  [class.system-source]="position.source === 'SYSTEM'"
+                  [class.manual-source]="
+                    position.source === 'MANUAL_UI' ||
+                    position.source === 'MANUAL_APP'
+                  "
+                  [class.mixed-source]="position.source === 'MIXED'"
+                >
+                  {{ sourceLabel(position.source) }}
+                </span>
+              </td>
+              <td>
+                <span class="role-pill">{{
+                  position.positionRole || "-"
+                }}</span>
+              </td>
+              <td>
+                <strong *ngIf="position.strike; else rawSymbol">
+                  {{ position.strike }} {{ position.optionType }}
+                </strong>
+                <ng-template #rawSymbol>
+                  <strong>{{ position.tradingSymbol }}</strong>
+                </ng-template>
+                <small class="contract-symbol">{{
+                  position.tradingSymbol
+                }}</small>
+              </td>
+              <td>
+                <span
+                  [class.short-side]="position.netQuantity < 0"
+                  [class.long-side]="position.netQuantity > 0"
+                >
+                  {{ positionSide(position) }}
+                </span>
+              </td>
+              <td>{{ position.netQuantity }}</td>
+              <td>{{ positionLots(position) | number: "1.0-2" }}</td>
+              <td>{{ position.averagePrice | number: "1.2-2" }}</td>
+              <td class="ltp-cell">
+                {{ position.lastPrice | number: "1.2-2" }}
+              </td>
+              <td
+                [class.profit]="position.pnl >= 0"
+                [class.loss]="position.pnl < 0"
+              >
+                {{ position.pnl | number: "1.0-0" }}
+              </td>
+              <td>
+                <span
+                  class="status-pill compact-status"
+                  [class.running]="position.isRealtime"
+                >
+                  {{ position.isRealtime ? "1 SEC" : "SNAPSHOT" }}
+                </span>
+                <small class="tick-time">
+                  {{
+                    position.lastTickAt
+                      ? (position.lastTickAt | date: "HH:mm:ss" : "+0530")
+                      : "-"
+                  }}
+                </small>
+              </td>
+              <td>
+                <button
+                  type="button"
+                  class="compact-button"
+                  (click)="viewPositionChart(position)"
+                  [disabled]="
+                    !position.strike ||
+                    !position.optionType ||
+                    !position.expiryDate
+                  "
+                >
+                  Chart
+                </button>
+              </td>
+              <td>
+                <div class="exit-actions">
+                  <button
+                    type="button"
+                    class="market-exit-button"
+                    (click)="exitBrokerPosition(position, 'MARKET')"
+                    [disabled]="brokerLoading || !executeBrokerOrders"
+                  >
+                    Exit MKT
+                  </button>
+
+                  <div class="limit-exit-row">
+                    <input
+                      class="table-price-input"
+                      type="number"
+                      min="0.05"
+                      step="0.05"
+                      [(ngModel)]="exitLimitPrices[position.tradingSymbol]"
+                    />
+                    <button
+                      type="button"
+                      class="limit-exit-button"
+                      (click)="exitBrokerPosition(position, 'LIMIT')"
+                      [disabled]="brokerLoading || !executeBrokerOrders"
+                    >
+                      Exit LMT
+                    </button>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <ng-template #noKotakPositions>
+        <p class="muted">No open NIFTY F&amp;O Kotak positions.</p>
+      </ng-template>
+    </div>
+
+    <div class="collapse-row" *ngIf="workingOrders.length > 0">
+      <button
+        type="button"
+        class="collapse-button secondary-collapse"
+        (click)="workingOrdersExpanded = !workingOrdersExpanded"
+      >
+        <span>{{ workingOrdersExpanded ? "▼" : "▶" }}</span>
+        Working orders ({{ workingOrders.length }})
+      </button>
+    </div>
+
+    <div
+      class="working-orders"
+      *ngIf="workingOrdersExpanded && workingOrders.length > 0"
+    >
+      <div *ngFor="let order of workingOrders" class="working-order-row">
+        <span
+          class="source-pill"
+          [class.system-source]="order.source === 'SYSTEM'"
+        >
+          {{ sourceLabel(order.source) }}
+        </span>
+        <strong>{{ order.tradingSymbol }}</strong>
+        <span>{{ order.side }} {{ order.quantity }}</span>
+        <span>{{ order.orderType }}</span>
+        <span>Limit {{ order.price | number: "1.2-2" }}</span>
+        <span>Premium {{ order.currentPremium | number: "1.2-2" }}</span>
+        <span>{{ order.status }}</span>
+      </div>
+    </div>
+
+    <div class="collapse-row manual-trade-toggle">
+      <button
+        type="button"
+        class="collapse-button secondary-collapse"
+        (click)="manualOrderExpanded = !manualOrderExpanded"
+      >
+        <span>{{ manualOrderExpanded ? "▼" : "▶" }}</span>
+        Place manual Kotak option order
+      </button>
+    </div>
+
+    <div class="manual-order-grid" *ngIf="manualOrderExpanded">
+      <div class="field">
+        <label>Expiry</label>
+        <input type="date" [(ngModel)]="expiryDate" (ngModelChange)="dataSelectionChanged()" />
+      </div>
+
+      <div class="field">
+        <label>Strike</label>
+        <input
+          type="number"
+          min="10000"
+          step="100"
+          [(ngModel)]="manualStrike"
+        />
+      </div>
+
+      <div class="field small-field">
+        <label>Option</label>
+        <select [(ngModel)]="manualOptionType">
+          <option value="CE">CE</option>
+          <option value="PE">PE</option>
+        </select>
+      </div>
+
+      <div class="field small-field">
+        <label>Side</label>
+        <select [(ngModel)]="manualSide">
+          <option value="BUY">BUY</option>
+          <option value="SELL">SELL</option>
+        </select>
+      </div>
+
+      <div class="field small-field">
+        <label>Lots</label>
+        <select [(ngModel)]="manualLots"><option [ngValue]="7">7 lots</option><option [ngValue]="15">15 lots</option></select>
+      </div>
+
+      <div class="field small-field">
+        <label>Kotak lot size</label>
+        <input type="number" min="1" [(ngModel)]="manualLotSize" readonly />
+        <small
+          >Auto-detected from Kotak; broker lot size is detected automatically;
+          backtest defaults to 7 lots of 65 (455 units).</small
+        >
+      </div>
+
+      <div class="field small-field">
+        <label>Order type</label>
+        <select [(ngModel)]="manualOrderType">
+          <option value="MARKET">MARKET</option>
+          <option value="LIMIT">LIMIT</option>
+        </select>
+      </div>
+
+      <div class="field small-field" *ngIf="manualOrderType === 'LIMIT'">
+        <label>Limit price</label>
+        <input
+          type="number"
+          step="0.05"
+          min="0.05"
+          [(ngModel)]="manualLimitPrice"
+        />
+      </div>
+
+      <div class="manual-order-action">
+        <button
+          type="button"
+          class="live-button"
+          (click)="placeManualTrade()"
+          [disabled]="brokerLoading || !executeBrokerOrders"
+        >
+          Place Kotak order
+        </button>
+        <small *ngIf="!executeBrokerOrders">
+          Enable “Send real Kotak Neo orders” first.
+        </small>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" *ngIf="backtestCurrentTrade as trade">
+    <div class="section-title-row">
+      <div>
+        <h2>{{ trade.isOpen ? "Open trade" : "Latest completed trade" }}</h2>
+        <p>
+          Signal {{ trade.signalTime | date: "HH:mm" : "+0530" }} • Entry
+          {{ trade.entryTime | date: "HH:mm" : "+0530" }}
+        </p>
+      </div>
+
+      <span class="status-pill" [class.running]="trade.isOpen">
+        {{ trade.isOpen ? "OPEN" : trade.exitReason }}
+      </span>
+    </div>
+
+    <div class="trade-grid">
+      <div>
+        <strong>Direction</strong>
+        <span>{{ trade.direction === 1 ? "BULLISH" : "BEARISH" }}</span>
+      </div>
+      <div>
+        <strong>Short leg</strong>
+        <span>SELL {{ trade.soldStrike }} {{ trade.soldOptionType }}</span>
+      </div>
+      <div>
+        <strong>Entry premium</strong>
+        <span>{{ trade.entryPrice | number: "1.2-2" }}</span>
+      </div>
+      <div>
+        <strong>Lots</strong>
+        <span>{{ trade.lots }}</span>
+        <ng-container
+          *ngTemplateOutlet="
+            appliedSettings;
+            context: {
+              $implicit: trade.riskSetup,
+              title: 'Applied to this trade',
+            }
+          "
+        ></ng-container>
+      </div>
+      <div>
+        <strong>Lot size</strong>
+        <span>{{ trade.lotSize }}</span>
+      </div>
+      <div>
+        <strong>Quantity</strong>
+        <span>{{ trade.quantity }}</span>
+      </div>
+      <div>
+        <strong>Hedge</strong>
+        <span *ngIf="trade.isHedged">
+          BUY {{ trade.hedgeStrike }} {{ trade.soldOptionType }} &#64;
+          {{ trade.hedgeEntryPrice | number: "1.2-2" }}
+        </span>
+        <span *ngIf="!trade.isHedged">Not active</span>
+      </div>
+      <div>
+        <strong>Gross P&amp;L</strong>
+        <span
+          [class.profit]="trade.grossPnl >= 0"
+          [class.loss]="trade.grossPnl < 0"
+        >
+          {{ trade.grossPnl | number: "1.0-0" }}
+        </span>
+      </div>
+      <div>
+        <strong>Estimated costs</strong>
+        <span>{{ trade.costs | number: "1.0-0" }}</span>
+      </div>
+      <div>
+        <strong>Net P&amp;L</strong>
+        <span
+          [class.profit]="trade.netPnl >= 0"
+          [class.loss]="trade.netPnl < 0"
+        >
+          {{ trade.netPnl | number: "1.0-0" }}
+        </span>
+      </div>
+      <div>
+        <strong>Best marked P&amp;L</strong>
+        <span>{{ trade.bestMarkPnl | number: "1.0-0" }}</span>
+      </div>
+      <div>
+        <strong>Worst marked P&amp;L</strong>
+        <span>{{ trade.worstMarkPnl | number: "1.0-0" }}</span>
+      </div>
+      <div *ngIf="trade.theoreticalMaxLossAfterHedge != null">
+        <strong>Defined max risk after hedge</strong>
+        <span>{{ trade.theoreticalMaxLossAfterHedge | number: "1.0-0" }}</span>
+      </div>
+      <div *ngIf="!trade.isOpen">
+        <strong>Exit</strong>
+        <span>
+          {{ trade.exitTime | date: "HH:mm" : "+0530" }} •
+          {{ trade.soldExitPrice | number: "1.2-2" }}
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel hedge-selector" *ngIf="expiryDate">
+    <div class="section-title-row compact">
+      <div>
+        <h2>Hedge selector / premium preview</h2>
+        <p>
+          Change the distance above. The system calculates the actual same-side
+          hedge strike automatically.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        (click)="changeHedgeDistance()"
+        [disabled]="hedgePreviewLoading || !hasHedgeReference"
+      >
+        {{ hedgePreviewLoading ? "Loading..." : "Refresh premium" }}
+      </button>
+    </div>
+
+    <div class="hedge-preview-grid" *ngIf="hedgePreview; else noHedgePreview">
+      <div>
+        <strong>Short reference</strong>
+        <span>{{ hedgePreview.soldStrike }} {{ hedgePreview.optionType }}</span>
+      </div>
+      <div>
+        <strong>Distance</strong>
+        <span>{{ hedgePreview.hedgeDistance }} points</span>
+      </div>
+      <div>
+        <strong>Hedge strike</strong>
+        <span
+          >{{ hedgePreview.hedgeStrike }} {{ hedgePreview.optionType }}</span
+        >
+      </div>
+      <div>
+        <strong>Hedge premium</strong>
+        <span *ngIf="hedgePreview.isAvailable && hedgePreview.premium != null">
+          {{ hedgePreview.premium | number: "1.2-2" }}
+        </span>
+        <span *ngIf="!hedgePreview.isAvailable || hedgePreview.premium == null">
+          Not available
+        </span>
+      </div>
+      <div>
+        <strong>Price time</strong>
+        <span *ngIf="hedgePreview.priceTime">
+          {{ hedgePreview.priceTime | date: "HH:mm" : "+0530" }}
+        </span>
+        <span *ngIf="!hedgePreview.priceTime">-</span>
+      </div>
+      <div>
+        <strong>Source</strong>
+        <span>{{ hedgePreview.priceSource }}</span>
+      </div>
+      <div>
+        <strong>Status</strong>
+        <span>{{ hedgePreview.message }}</span>
+      </div>
+    </div>
+
+    <ng-template #noHedgePreview>
+      <div
+        class="hedge-preview-grid"
+        *ngIf="computedHedgeStrike; else noHedgeReference"
+      >
+        <div>
+          <strong>Calculated hedge strike</strong>
+          <span>{{ computedHedgeStrike }} {{ computedHedgeOptionType }}</span>
+        </div>
+        <div>
+          <strong>Premium</strong>
+          <span>Click Refresh premium</span>
+        </div>
+      </div>
+
+      <ng-template #noHedgeReference>
+        <p class="muted">
+          Start live/replay, wait for a signal/trade, or select a chart strike
+          to preview the hedge.
+        </p>
+      </ng-template>
+    </ng-template>
+  </section>
+
+  <section class="panel chart-panel" *ngIf="expiryDate">
+    <div class="section-title-row compact">
+      <div>
+        <h2>Premium candlestick chart</h2>
+        <p>Entry, hedge and exit are marked directly on the premium chart.</p>
+      </div>
+
+      <div class="chart-controls">
+        <div class="field small-field">
+          <label>Strike</label>
+          <input type="number" step="100" [(ngModel)]="chartStrike" />
+        </div>
+
+        <div class="field small-field">
+          <label>Option</label>
+          <select [(ngModel)]="chartOptionType">
+            <option value="CE">CE</option>
+            <option value="PE">PE</option>
+          </select>
+        </div>
+
+        <button type="button" (click)="loadChart()" [disabled]="!chartStrike">
+          Load chart
+        </button>
+      </div>
+    </div>
+
+    <app-premium-chart
+      *ngIf="chartCandles.length > 0"
+      [candles]="chartCandles"
+      [trades]="chartTrades"
+      [signal]="chartSignal"
+      [visibleUntil]="mode === 'backtest' ? step?.currentTime : undefined"
+      [title]="(chartStrike || '') + ' ' + chartOptionType + ' premium'"
+    >
+    </app-premium-chart>
+
+    <div class="empty-chart" *ngIf="chartCandles.length === 0">
+      Select a strike or start the replay/live engine to load its 5-minute
+      premium chart.
+    </div>
+  </section>
+
+  <section class="panel" *ngIf="completedDayTrades.length > 0">
+    <h2>Day trade details</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Signal</th>
+            <th>Entry</th>
+            <th>Short leg</th>
+            <th>Entry premium</th>
+            <th>Lots / size</th>
+            <th>Qty</th>
+            <th>Hedge</th>
+            <th>Hedge premium</th>
+            <th>Exit</th>
+            <th>Reason</th>
+            <th>Best</th>
+            <th>Worst</th>
+            <th>Gross</th>
+            <th>Cost</th>
+            <th>Net</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let trade of completedDayTrades; let i = index">
+            <td>{{ i + 1 }}</td>
+            <td>{{ trade.signalTime | date: "HH:mm" : "+0530" }}</td>
+            <td>{{ trade.entryTime | date: "HH:mm" : "+0530" }}</td>
+            <td>SELL {{ trade.soldStrike }} {{ trade.soldOptionType }}</td>
+            <td>{{ trade.entryPrice | number: "1.2-2" }}</td>
+            <td>
+              {{ trade.lots }} × {{ trade.lotSize }}
+              <details *ngIf="trade.riskSetup">
+                <summary>Applied settings</summary>
+                <ng-container
+                  *ngTemplateOutlet="
+                    appliedSettings;
+                    context: {
+                      $implicit: trade.riskSetup,
+                      title: 'Trade settings',
+                    }
+                  "
+                ></ng-container>
+              </details>
+            </td>
+            <td>{{ trade.quantity }}</td>
+            <td>
+              <span *ngIf="trade.hasMarginHedge">Margin: {{ trade.marginHedgeStrike }} &#64; {{ trade.marginHedgeEntryPrice | number: "1.2-2" }}<br /></span>
+              <span *ngIf="trade.isHedged">Protection: {{ trade.hedgeStrike }}</span>
+              <span *ngIf="!trade.isHedged">-</span>
+            </td>
+            <td>
+              <span *ngIf="trade.isHedged">
+                {{ trade.hedgeEntryPrice | number: "1.2-2" }}
+              </span>
+              <span *ngIf="!trade.isHedged">-</span>
+            </td>
+            <td>{{ trade.exitTime | date: "HH:mm" : "+0530" }}</td>
+            <td>{{ trade.exitReason }}</td>
+            <td>{{ trade.bestMarkPnl | number: "1.0-0" }}</td>
+            <td>{{ trade.worstMarkPnl | number: "1.0-0" }}</td>
+            <td>{{ trade.grossPnl | number: "1.0-0" }}</td>
+            <td>{{ trade.costs | number: "1.0-0" }}</td>
+            <td
+              [class.profit]="trade.netPnl >= 0"
+              [class.loss]="trade.netPnl < 0"
+            >
+              {{ trade.netPnl | number: "1.0-0" }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel range-panel" *ngIf="mode === 'backtest'">
+    <div class="section-title-row compact">
+      <div>
+        <h2>Multi-day backtest</h2>
+        <p>
+          Missing day/strike candles are fetched from ICICI only when the
+          database does not already contain them.
+        </p>
+      </div>
+
+      <div class="range-controls">
+        <div class="field small-field">
+          <label>From</label>
+          <input type="date" [(ngModel)]="rangeFrom" />
+        </div>
+
+        <div class="field small-field">
+          <label>To</label>
+          <input type="date" [(ngModel)]="rangeTo" />
+        </div>
+
+        <button
+          type="button"
+          class="primary"
+          [disabled]="loading || replayBusy"
+          (click)="runRange()"
+        >
+          Run range
+        </button>
+      </div>
+    </div>
+
+    <div class="metric-grid range-metrics" *ngIf="rangeResult">
+      <div class="metric">
+        <span class="metric-label">Net P&amp;L</span>
+        <strong
+          [class.profit]="rangeResult.netPnl >= 0"
+          [class.loss]="rangeResult.netPnl < 0"
+        >
+          {{ rangeResult.netPnl | number: "1.0-0" }}
+        </strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Gross P&amp;L</span>
+        <strong>{{ rangeResult.grossPnl | number: "1.0-0" }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Costs</span>
+        <strong>{{ rangeResult.costs | number: "1.0-0" }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Trades</span>
+        <strong>{{ rangeResult.totalTrades }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Win rate</span>
+        <strong>{{ rangeResult.winRate | number: "1.1-1" }}%</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Average / trade</span>
+        <strong>{{ rangeResult.averagePnlPerTrade | number: "1.0-0" }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Hedge usage</span>
+        <strong>
+          {{ rangeResult.hedgedTrades }} / {{ rangeResult.totalTrades }} ({{
+            rangeResult.hedgeUsageRate | number: "1.1-1"
+          }}%)
+        </strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Avg defined risk after hedge</span>
+        <strong>{{
+          rangeResult.averageDefinedRiskAfterHedge | number: "1.0-0"
+        }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Max drawdown</span>
+        <strong class="loss">{{
+          rangeResult.maxDrawdown | number: "1.0-0"
+        }}</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Profitable days</span>
+        <strong
+          >{{ rangeResult.profitableDays }} /
+          {{ rangeResult.days.length }}</strong
+        >
+      </div>
+    </div>
+
+    <div class="messages" *ngIf="rangeMessages.length > 0">
+      <div *ngFor="let message of rangeMessages">
+        {{ message }}
+      </div>
+    </div>
+
+    <div class="table-wrap" *ngIf="rangeDays.length > 0">
+      <h3>Day summary</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Expiry</th>
+            <th>Trades</th>
+            <th>Wins</th>
+            <th>Losses</th>
+            <th>Gross</th>
+            <th>Costs</th>
+            <th>Net P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let day of rangeDays">
+            <td>{{ day.date }}</td>
+            <td>{{ day.expiryDate }}</td>
+            <td>{{ day.trades.length }}</td>
+            <td>{{ day.wins }}</td>
+            <td>{{ day.losses }}</td>
+            <td>{{ day.grossPnl | number: "1.0-0" }}</td>
+            <td>{{ day.costs | number: "1.0-0" }}</td>
+            <td [class.profit]="day.netPnl >= 0" [class.loss]="day.netPnl < 0">
+              {{ day.netPnl | number: "1.0-0" }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-wrap" *ngIf="rangeTrades.length > 0">
+      <h3>All trades</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Signal</th>
+            <th>Entry</th>
+            <th>Short leg</th>
+            <th>Entry premium</th>
+            <th>Lots / size</th>
+            <th>Qty</th>
+            <th>Hedge</th>
+            <th>Exit</th>
+            <th>Reason</th>
+            <th>Gross</th>
+            <th>Cost</th>
+            <th>Net</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let trade of rangeTrades">
+            <td>{{ trade.sessionDate }}</td>
+            <td>{{ trade.signalTime | date: "HH:mm" : "+0530" }}</td>
+            <td>{{ trade.entryTime | date: "HH:mm" : "+0530" }}</td>
+            <td>{{ trade.soldStrike }} {{ trade.soldOptionType }}</td>
+            <td>{{ trade.entryPrice | number: "1.2-2" }}</td>
+            <td>
+              {{ trade.lots }} × {{ trade.lotSize }}
+              <details *ngIf="trade.riskSetup">
+                <summary>Applied settings</summary>
+                <ng-container
+                  *ngTemplateOutlet="
+                    appliedSettings;
+                    context: {
+                      $implicit: trade.riskSetup,
+                      title: 'Trade settings',
+                    }
+                  "
+                ></ng-container>
+              </details>
+            </td>
+            <td>{{ trade.quantity }}</td>
+            <td>
+              <span *ngIf="trade.hasMarginHedge">Margin: {{ trade.marginHedgeStrike }} &#64; {{ trade.marginHedgeEntryPrice | number: "1.2-2" }}<br /></span>
+              <span *ngIf="trade.isHedged">
+                Protection: {{ trade.hedgeStrike }} &#64;
+                {{ trade.hedgeEntryPrice | number: "1.2-2" }}
+              </span>
+              <span *ngIf="!trade.isHedged">-</span>
+            </td>
+            <td>{{ trade.exitTime | date: "HH:mm" : "+0530" }}</td>
+            <td>{{ trade.exitReason }}</td>
+            <td>{{ trade.grossPnl | number: "1.0-0" }}</td>
+            <td>{{ trade.costs | number: "1.0-0" }}</td>
+            <td
+              [class.profit]="trade.netPnl >= 0"
+              [class.loss]="trade.netPnl < 0"
+            >
+              {{ trade.netPnl | number: "1.0-0" }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
